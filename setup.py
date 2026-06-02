@@ -5,7 +5,7 @@ import pybind11
 ext_modules = [
     Extension(
         "_flowbalance_cpp",  # The name Python will use to import the compiled binary
-        ["src/flowbalance/expander/cpp_core.cpp"], # Path to your C++ file
+        ["src/flowbalance/expander/cpp_core.cpp"], # Path to the C++ file
         include_dirs=[pybind11.get_include()],
         language="c++",
         # -O3 applies maximum execution speed optimizations during compilation
