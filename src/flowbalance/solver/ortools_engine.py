@@ -14,6 +14,7 @@ class ORToolsNetworkSolver(BaseSolver):
     def solve(self, network: Network, horizon: int, unfulfillment_penalty: float = 1e6) -> Dict[str, Any]:
         self.solver.Clear()
         
+        # 1. Topological Expansion
         expander = TimeSpaceExpander(network, horizon)
         expanded_arcs = expander.build_time_expanded_arcs()
         rhs_map = expander.compute_commodity_rhs()
@@ -65,16 +66,20 @@ class ORToolsNetworkSolver(BaseSolver):
             outgoing_arcs[(u, ts)].append(arc)
             incoming_arcs[(v, te)].append(arc)
 
+        # Guarantee all spatial locations with demand are evaluated, even if disconnected
         coordinates = set(outgoing_arcs.keys()).union(set(incoming_arcs.keys()))
+        for rhs_key in rhs_map.keys():
+            node, t, _ = rhs_key
+            coordinates.add((node, t))
 
-        # 4. Mass Balance Constraints (Using absolute demand volume)
+        # 4. Mass Balance Constraints
         for comm_id in commodities_map.keys():
             for coord in coordinates:
                 node, t = coord
                 
-                # Fetch actual volume v^k
                 rhs_val = rhs_map.get((node, t, comm_id), 0.0)
                 
+                # Neutralize constraint generation for mathematically inert coordinates
                 if rhs_val == 0.0 and not outgoing_arcs[coord] and not incoming_arcs[coord]:
                     continue
 
@@ -100,11 +105,17 @@ class ORToolsNetworkSolver(BaseSolver):
                 continue 
 
             for t in range(horizon):
+                t_bar = t + edge.transit_time
+                
+                # Prune capacity row generation if the temporal transit exceeds the allowed horizon
+                if t_bar >= horizon:
+                    continue
+
                 cap_constraint = self.solver.Constraint(0.0, capacity, f"cap_{edge.from_node}_{edge.to_node}_{t}")
                 has_vars = False
                 
                 for comm_id in commodities_map.keys():
-                    arc_key = (edge.from_node, t, edge.to_node, t + edge.transit_time, comm_id)
+                    arc_key = (edge.from_node, t, edge.to_node, t_bar, comm_id)
                     if arc_key in x:
                         alpha = commodities_map[comm_id].consumption_factor
                         cap_constraint.SetCoefficient(x[arc_key], alpha)
