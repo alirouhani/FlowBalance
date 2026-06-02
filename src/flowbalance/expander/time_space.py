@@ -1,54 +1,60 @@
 from typing import List, Dict, Tuple
 from flowbalance.core.entities import Network
 
+# Attempt to load the blazing-fast C++ backend
+try:
+    import _flowbalance_cpp
+    C_BACKEND_AVAILABLE = True
+except ImportError:
+    C_BACKEND_AVAILABLE = False
+    print("Warning: C++ backend not found. Falling back to pure Python loop execution.")
+
 class TimeSpaceExpander:
     def __init__(self, network: Network, horizon: int):
         self.network = network
         self.horizon = horizon
 
-    def build_time_expanded_arcs(self) -> List[Tuple[str, str, int, int, str]]:
-        """Generates holding and transit arcs across the temporal planning window."""
-        expanded_arcs = []
-        node_ids = {n.id for n in self.network.nodes}
-
+    def build_time_expanded_arcs(self) -> List[Tuple[str, int, str, int]]:
+        """
+        Constructs the complete set of unified directed time-space arcs.
+        Returns a list of tuples formatted as: (from_location, from_time, to_location, to_time)
+        """
+        if C_BACKEND_AVAILABLE:
+            return _flowbalance_cpp.build_arcs(self.horizon, self.network.nodes, self.network.edges)
+        
+        expanded_arcs: List[Tuple[str, int, str, int]] = []
+        
+        # 1. Pure Python Fallback: Temporal Holding Arcs -> ((i, t), (i, t+1))
+        for t in range(self.horizon - 1):
+            for node in self.network.nodes:
+                expanded_arcs.append((node.id, t, node.id, t + 1))
+                
+        # 2. Pure Python Fallback: Physical Transit Arcs -> ((i, t), (j, t_bar))
         for t in range(self.horizon):
-            # 1. Holding Arcs (Stay at the same location)
-            if t < self.horizon - 1:
-                for node_id in node_ids:
-                    expanded_arcs.append((node_id, node_id, t, t + 1, "holding"))
-
-            # 2. Transit Arcs (Move between locations)
             for edge in self.network.edges:
-                arrival_time = t + edge.transit_time
-                if arrival_time < self.horizon:
-                    expanded_arcs.append((edge.from_node, edge.to_node, t, arrival_time, "transit"))
-
+                t_bar = t + edge.transit_time
+                if t_bar < self.horizon:
+                    expanded_arcs.append((edge.from_node, t, edge.to_node, t_bar))
+                    
         return expanded_arcs
 
-    def compute_commodity_rhs(self) -> Dict[Tuple[str, str, int], float]:
+    def compute_commodity_rhs(self) -> Dict[Tuple[str, int, str], float]:
         """
-        Compiles the independent RHS matrix vector (b).
-        Key: (node_id, commodity_id, time_step) -> Value: net injection
+        Compiles absolute demand injection vectors across discrete time-space nodes.
+        Returns a dictionary mapped as: {(location, time, commodity_id): volume}
         """
-        b: Dict[Tuple[str, str, int], float] = {}
-
-        # Initialize the sparse map to 0.0 for every active node, commodity, and time step
-        node_ids = {n.id for n in self.network.nodes}
+        if C_BACKEND_AVAILABLE:
+            return _flowbalance_cpp.compute_rhs(self.horizon, self.network.commodities)
+        
+        b: Dict[Tuple[str, int, str], float] = {}
+        
         for comm in self.network.commodities:
-            for node_id in node_ids:
-                for t in range(self.horizon):
-                    b[(node_id, comm.id, t)] = 0.0
-
-        # Inject the faucets and drains matching your definition
-        for comm in self.network.commodities:
-            # Source faucet (+volume)
-            src_key = (comm.origin, comm.id, comm.available_time)
-            if src_key in b:
-                b[src_key] += comm.volume
-
-            # Sink drain (-volume)
-            sink_key = (comm.destination, comm.id, comm.due_date)
-            if sink_key in b:
-                b[sink_key] -= comm.volume
-
+            # Source coordinate injection (s^k) -> +v^k
+            source_key = (comm.origin, comm.available_time, comm.id)
+            b[source_key] = b.get(source_key, 0.0) + comm.volume
+            
+            # Sink coordinate extraction (e^k) -> -v^k
+            sink_key = (comm.destination, comm.due_date, comm.id)
+            b[sink_key] = b.get(sink_key, 0.0) - comm.volume
+            
         return b
