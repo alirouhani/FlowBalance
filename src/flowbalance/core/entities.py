@@ -10,7 +10,7 @@ class Node(BaseModel):
 class Edge(BaseModel):
     from_node: str
     to_node: str
-    transit_time: int = Field(..., ge=1, description="Time steps required for transit")
+    transit_time: int = Field(..., ge=0, description="Time steps required for transit")
     shared_capacity_limit: float = Field(float('inf'), ge=0)
     # Cost to move one unit of a specific asset type across this edge: {asset_type: cost}
     costs_per_unit: Dict[str, float] = Field(default_factory=dict)
