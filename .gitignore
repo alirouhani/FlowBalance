@@ -5,3 +5,9 @@
 *$py.class
 src/flowbalance.egg-info/
 *.so
+*.pyc
+*.pyd
+build/
+dist/
+*.egg-info/
+.DS_Store
