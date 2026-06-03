@@ -28,6 +28,8 @@ def run_finance_example():
     results = fb.ORToolsNetworkSolver().solve(network, horizon=4, unfulfillment_penalty=10000.0)
     
     print(fb.SolutionExporter(results).to_flow_dataframe().to_string())
+    print(fb.SolutionExporter(results).objective_value)
+    print(fb.ColumnGenerationSolver().solve(network, horizon=6))    
 
 if __name__ == "__main__":
     run_finance_example()

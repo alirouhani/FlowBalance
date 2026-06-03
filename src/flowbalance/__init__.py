@@ -3,6 +3,7 @@ from flowbalance.expander.time_space import TimeSpaceExpander
 from flowbalance.loader.pandas_io import PandasLoader
 from flowbalance.solver.ortools_engine import ORToolsNetworkSolver
 from flowbalance.analytics.exporter import SolutionExporter
+from flowbalance.cg_solver.cg_engine import ColumnGenerationSolver
 
 __all__ = [
     "Node", 
@@ -12,5 +13,6 @@ __all__ = [
     "PandasLoader",
     "TimeSpaceExpander", 
     "ORToolsNetworkSolver", 
-    "SolutionExporter"
+    "SolutionExporter",
+    "ColumnGenerationSolver"
 ]

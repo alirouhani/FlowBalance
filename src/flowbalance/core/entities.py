@@ -36,6 +36,13 @@ class Network(BaseModel):
     edges: List[Edge]
     commodities: List[Commodity]
 
+    def get_edge(self, u: int, v: int) -> Edge:
+        """Looks up an edge based on source (u) and destination (v) nodes."""
+        for edge in self.edges:
+            if edge.from_node == u and edge.to_node == v:
+                return edge
+        raise ValueError(f"No edge found connecting node {u} to node {v}")
+
     @model_validator(mode='after')
     def enforce_relational_integrity(self):
         valid_nodes = {n.id for n in self.nodes}
