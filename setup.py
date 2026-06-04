@@ -1,4 +1,4 @@
-from setuptools import setup, Extension
+from setuptools import setup, Extension, find_packages
 import sys
 import pybind11
 
@@ -31,8 +31,9 @@ ext_modules = [
 
 setup(
     name="flowbalance",
-    version="1.0.0",
-    packages=["flowbalance", "flowbalance.core", "flowbalance.solver", "flowbalance.expander"],
+    version="1.1.0",
+    # Dynamically discovers all sub-packages in src/ (loader, analytics, core, cg_solver, etc.)
+    packages=find_packages(where="src"),
     package_dir={"": "src"},
     ext_modules=ext_modules,
     install_requires=[
