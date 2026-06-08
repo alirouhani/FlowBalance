@@ -106,6 +106,7 @@ class ColumnGenerationSolver:
             dual_w = [c.DualValue() for c in capacity_constraints]
             dual_alpha = [c.DualValue() for c in convexity_constraints]
 
+            # 1. Stall-Detection Fallback Check
             if abs(last_obj_val - current_obj_val) < 1e-4 and iteration > 0:
                 filter_active = False 
             else:
@@ -113,15 +114,19 @@ class ColumnGenerationSolver:
 
             last_obj_val = current_obj_val
 
+            # 2. Dual-Variable Heuristic Filtering
             pricing_pool_indices: Set[int] = set()
             if filter_active:
                 negative_dual_arcs = {idx for idx, w in enumerate(dual_w) if w < -1e-6}
+                # Filter the pool: Only include commodities that are currently utilizing 
+                # at least one of these bottleneck arcs in their active paths.
                 for var, arc_ids in path_var_map.items():
                     if var.solution_value() > 1e-6:
                         if any(arc in negative_dual_arcs for arc in arc_ids):
                             comm_id = int(var.name().split('_c')[1].split('_')[0])
                             pricing_pool_indices.add(comm_id)
             
+            # 3. Dynamic Fallback Allocation
             if not pricing_pool_indices or not filter_active:
                 pricing_pool_indices = set(range(len(network.commodities)))
 

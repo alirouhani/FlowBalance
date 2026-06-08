@@ -102,7 +102,7 @@ To see how adaptable the engine is across different industries, check out the `e
 ## ⚙️ Architecture Highlights
 
 * **Dantzig-Wolfe Column Generation:** Bypasses the memory limits of massive time-space network arrays. The Python Master Problem manages shared capacities, while a C++ pricing engine dynamically evaluates exact reduced costs to generate optimal paths on the fly.
-* **Cycle-Robust Pricing Search:** Safely navigates zero-cost temporal holding cycles using a heavily optimized Dijkstra/A* priority queue, scaling perfectly with asset volumes and consumption factors.
+* **Cycle-Robust Pricing Search:** Safely navigates zero-cost temporal holding cycles using a heavily optimized Dijkstra priority queue, scaling perfectly with asset volumes and consumption factors.
 * **Pricing Filter Optimization:** Implements advanced dual-variable heuristics to filter the pricing pool, drastically reducing the number of necessary shortest-path searches per iteration without sacrificing mathematical optimality.
 * **Pydantic Data Validation:** Strict input schemas prevent timeline violations (e.g., negative transit times or illogical due dates) and enforce strict relational integrity before any matrices are built.
 
