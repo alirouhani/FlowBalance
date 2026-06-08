@@ -2,45 +2,45 @@
 
 **High-Performance Time-Space Network Optimization and Routing Engine**
 
-`flowbalance` is a fast, flexible, and mathematically rigorous Python package designed to solve dynamic Multi-Commodity Network Flow and Fixed-Charge Network Design (MCFND) problems. 
+`flowbalance` is a fast, flexible, and mathematically rigorous Python package designed to solve dynamic Multi-Commodity Network Flow and Fixed-Charge Network Design (MCFND) problems.
 
-Powered by a blazing-fast **C++ topological expansion core** and the **Google OR-Tools** solver engine, `flowbalance` allows data scientists and operations researchers to model complex asset routing over time, manage shared bottleneck capacities, and extract clean, pandas-ready operational analytics.
+Powered by **dual C++ cores** (for topological expansion and high-speed dynamic pricing) and the **Google OR-Tools** engine, `flowbalance` utilizes exact Dantzig-Wolfe decomposition to solve massive routing problems. It allows data scientists and operations researchers to model complex asset routing over time, manage shared bottleneck capacities, and extract clean, pandas-ready operational analytics.
 
 ---
 
 ## 🧠 The Core Concept: Everything is a Network
 
-At its heart, `flowbalance` doesn't just route trucks between cities. It uses a **Time-Space Coordinate Expansion**, meaning it treats the world as abstract mathematical states and transitions. If you have "criteria" or "assets" that need to move from State A to State B over $T$ time, you can model it:
+At its heart, `flowbalance` doesn't just route trucks between cities. It uses a **Time-Space Coordinate Expansion**, meaning it treats the world as abstract mathematical states and transitions. If you have "criteria" or "assets" that need to move from State A to State B over **T** time, you can model it:
 
 * **Logistics & Freight:** Nodes are cities, edges are highways, and transit time is driving duration.
 * **Supply Chain & Inventory:** Nodes are warehouses, edges are internal transfers, and holding costs are storage fees.
 * **Production Planning:** Nodes are assembly machines, edges are processing actions, and transit time is machine cycle time.
 * **Finance & Treasury:** Nodes are corporate bank accounts, edges are wire transfers, and transit time is the banking clearing period.
 
-Whether you are running a multi-period dynamic simulation ($T=30$) or evaluating a classical single-period static network ($T=1$, instantaneous transits), `flowbalance` safely compiles the topology and calculates the most cost-effective mass-balance flows.
+Whether you are running a multi-period dynamic simulation (**T=30**) or evaluating a classical single-period static network (**T=1**, instantaneous transits), `flowbalance` safely compiles the topology and calculates the most cost-effective mass-balance flows.
 
 ---
 
 ## 🚀 Installation
 
-`flowbalance` utilizes a compiled C++ backend extension for maximum speed. Ensure your system has a working C++ compiler installed (e.g., GCC for Linux, Clang/Xcode for macOS, or MSVC for Windows).
+`flowbalance` utilizes compiled C++ backend extensions (`pybind11`) for maximum speed. Ensure your system has a working C++17 compiler installed (e.g., GCC for Linux, Clang/Xcode for macOS, or MSVC for Windows).
 
 ### Production Setup (Direct from GitHub)
+
 To install the package directly into your environment for use in your own projects:
+
 ```bash
-pip install git+[https://github.com/your_username/flowbalance_project.git](https://github.com/your_username/flowbalance_project.git)
+pip install git+https://github.com/alirouhani/flowbalance.git
 
 ```
-
-*(Note: Replace `your_username` with your actual GitHub handle).*
 
 ### Development Setup (For Contributors)
 
 If you want to modify the source code, tweak the C++ memory allocation, or run the test suite:
 
 ```bash
-git clone [https://github.com/your_username/flowbalance_project.git](https://github.com/your_username/flowbalance_project.git)
-cd flowbalance_project
+git clone https://github.com/alirouhani/flowbalance.git
+cd flowbalance
 
 # Install in editable mode to instantly track local Python/C++ changes
 pip install -e ".[dev]"
@@ -76,9 +76,9 @@ df_commodities = pd.DataFrame([
 # 2. LOAD NETWORK
 network = fb.PandasLoader(df_nodes, df_edges, df_commodities).load_network()
 
-# 3. SOLVE
-solver = fb.ORToolsNetworkSolver()
-results = solver.solve(network, horizon=3, unfulfillment_penalty=5000.0)
+# 3. SOLVE VIA COLUMN GENERATION
+solver = fb.ColumnGenerationSolver()
+results = solver.solve(network, horizon=3, max_iterations=200)
 
 # 4. EXPORT ANALYTICS
 exporter = fb.SolutionExporter(results)
@@ -90,7 +90,7 @@ print(exporter.to_flow_dataframe())
 
 ## 📂 Real-World Examples
 
-To see how adaptable the engine is across different industries, check out the [`examples/`](https://www.google.com/search?q=./examples) directory in this repository. You will find ready-to-run scripts demonstrating:
+To see how adaptable the engine is across different industries, check out the `examples/` directory in this repository. You will find ready-to-run scripts demonstrating:
 
 1. **`01_logistics_routing.py`**: Multi-modal freight routing prioritizing cheap rail vs. fast air-freight under strict deadlines.
 2. **`02_inventory_management.py`**: Balancing high factory storage costs against multi-echelon distribution center transfers.
@@ -101,12 +101,13 @@ To see how adaptable the engine is across different industries, check out the [`
 
 ## ⚙️ Architecture Highlights
 
-* **Pydantic Data Validation:** Strict input schemas prevent timeline violations (e.g., negative transit times or illogical due dates).
-* **Dual-Layer Expansion:** Automatically defaults to a highly optimized `pybind11` C++ graph builder for massive networks, while maintaining a pure Python loop fallback for unsupported architectures.
-* **Elastic Demand Dropping:** If physical capacity is bottlenecked, the solver won't crash. It uses an elastic penalty variable ($y^k$) to drop the minimum required volume and reports it in the bottleneck analytics exporter.
+* **Dantzig-Wolfe Column Generation:** Bypasses the memory limits of massive time-space network arrays. The Python Master Problem manages shared capacities, while a C++ pricing engine dynamically evaluates exact reduced costs to generate optimal paths on the fly.
+* **Cycle-Robust Pricing Search:** Safely navigates zero-cost temporal holding cycles using a heavily optimized Dijkstra/A* priority queue, scaling perfectly with asset volumes and consumption factors.
+* **Pricing Filter Optimization:** Implements advanced dual-variable heuristics to filter the pricing pool, drastically reducing the number of necessary shortest-path searches per iteration without sacrificing mathematical optimality.
+* **Pydantic Data Validation:** Strict input schemas prevent timeline violations (e.g., negative transit times or illogical due dates) and enforce strict relational integrity before any matrices are built.
 
 ---
 
 ## 🤝 Contributing
 
-Pull requests are welcome! For major algorithmic changes, please open an issue first to discuss what you would like to change. Ensure you run the pytest suite (`pytest -v`) before submitting your code.
+Pull requests are welcome! For major algorithmic changes, please open an issue first to discuss what you would like to change. Ensure you run the complete test suite (`pytest tests/ -v`) to verify the structural integrity and objective scaling before submitting your code.

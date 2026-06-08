@@ -4,7 +4,7 @@ from flowbalance.cg_solver.cg_engine import ColumnGenerationSolver
 
 @pytest.fixture
 def base_network_data():
-    """Fixture to build a valid physical network infrastructure."""
+    """Fixture establishing a valid physical network infrastructure."""
     nodes = [
         Node(id="Vancouver", capacity_limit=100.0, holding_costs={"20FT": 2.0}),
         Node(id="Calgary", capacity_limit=100.0, holding_costs={"20FT": 1.5}),
@@ -37,10 +37,10 @@ def base_network_data():
     return nodes, edges
 
 
-def test_single_commodity_direct_routing(base_network_data):
+def test_exact_volume_scaling_routing(base_network_data):
     """
-    Test 1: Verifies that a single commodity takes the mathematically 
-    cheapest path across time steps.
+    Test 1: Verifies that the C++ pricing engine correctly scales path costs 
+    by the commodity volume, selecting the optimal combination of transit and holding.
     """
     nodes, edges = base_network_data
     
@@ -61,23 +61,24 @@ def test_single_commodity_direct_routing(base_network_data):
     network = Network(nodes=nodes, edges=edges, commodities=commodities)
     solver = ColumnGenerationSolver()
     
-    # Solve with a time horizon of 3 steps
     result = solver.solve(network, horizon=3)
     
     assert result["status"] == "OPTIMAL"
-    # Cost should equal: volume (10.0) * edge_cost (10.0) = 100.0
-    # Plus holding cost at destination if it stays there until due_date
-    assert result["objective_value"] >= 100.0
+    
+    # The optimal mathematical path: 
+    # Transit Van -> Cal at t=0 (Cost: 10.0/unit)
+    # Hold at Cal from t=1 to t=2 (Cost: 1.5/unit)
+    # Total Unit Cost = 11.5 | Total Bulk Cost = 11.5 * 10.0 = 115.0
+    assert result["objective_value"] == pytest.approx(115.0, rel=1e-5)
 
 
-def test_holding_arc_activation(base_network_data):
+def test_holding_arc_temporal_penalty(base_network_data):
     """
-    Test 2: Forces the commodity to wait at an inventory node (holding arc) 
-    because the due date is extended, evaluating holding cost injection.
+    Test 2: Evaluates extended temporal inventory behavior. The solver must dynamically 
+    calculate holding costs across multiple time steps.
     """
     nodes, edges = base_network_data
     
-    # Arrival is forced to wait
     commodities = [
         Commodity(
             id="C2",
@@ -86,7 +87,7 @@ def test_holding_arc_activation(base_network_data):
             destination="Calgary",
             volume=5.0,
             available_time=0,
-            due_date=3, # Extended due date forces holding behavior
+            due_date=3, 
             consumption_factor=1.0
         )
     ]
@@ -97,22 +98,23 @@ def test_holding_arc_activation(base_network_data):
     result = solver.solve(network, horizon=4)
     
     assert result["status"] == "OPTIMAL"
-    # Base transit cost: 5.0 * 10.0 = 50.0
-    # The solver will find the shortest path, incurring temporal holding costs
-    assert result["objective_value"] > 50.0
+    
+    # Path: Van(0) -> Cal(1) -> Cal(2) -> Cal(3)
+    # Unit Cost: 10.0 (Transit) + 1.5 (Hold) + 1.5 (Hold) = 13.0
+    # Total Bulk Cost = 13.0 * 5.0 = 65.0
+    assert result["objective_value"] == pytest.approx(65.0, rel=1e-5)
 
 
-def test_shared_edge_capacity_bottleneck(base_network_data):
+def test_convexity_and_artificial_penalty(base_network_data):
     """
-    Test 3: Confirms the column generation engine respects shared edge capacities.
-    Total requested volume exceeds direct edge limits, forcing alternative paths or split routes.
+    Test 3: Confirms the Dantzig-Wolfe convexity constraint triggers the big-M 
+    artificial penalty when spatial network capacity physically cannot meet demand.
     """
     nodes, edges = base_network_data
     
-    # Shrink the capacity of Vancouver -> Calgary to force a bottleneck
+    # Artificially constrain the capacity bottleneck
     edges[0].shared_capacity_limit = 5.0 
     
-    # We want to move 15.0 units, but edge capacity is only 5.0
     commodities = [
         Commodity(
             id="C3_bulk",
@@ -130,16 +132,52 @@ def test_shared_edge_capacity_bottleneck(base_network_data):
     
     result = solver.solve(network, horizon=3)
     
-    # If the system cannot handle the overflow due to capacity limitations, 
-    # the objective will reflect the utilization of the high big-M artificial penalty variables
     assert result["status"] == "OPTIMAL"
-    assert result["objective_value"] > 0.0
+    
+    # The solver will brilliantly split the flow across TWO time steps:
+    # 1. Van(0) -> Cal(1) -> Cal(2) [uses 5.0 capacity]
+    # 2. Van(0) -> Van(1) -> Cal(2) [uses 5.0 capacity]
+    # The remaining 5.0 volume (1/3 of total) is forced into the big-M artificial column.
+    # Therefore, the cost will be roughly 1/3 of 1e6 plus the minor physical routing costs.
+    assert result["objective_value"] > 300000.0
+
+
+def test_consumption_factor_scaling(base_network_data):
+    """
+    Test 4: Ensures the consumption factor dynamically scales the capacity utilized 
+    in the Master Problem and influences dual values sent to the C++ core.
+    """
+    nodes, edges = base_network_data
+    
+    # 10 units requested, but consumption_factor is 2.0 (effectively takes 20 capacity)
+    # Edge capacity is 30.0, so this should route successfully without triggering big-M.
+    commodities = [
+        Commodity(
+            id="C4",
+            asset_type="20FT",
+            origin="Vancouver",
+            destination="Calgary",
+            volume=10.0,
+            available_time=0,
+            due_date=2,
+            consumption_factor=2.0 
+        )
+    ]
+    
+    network = Network(nodes=nodes, edges=edges, commodities=commodities)
+    solver = ColumnGenerationSolver()
+    
+    result = solver.solve(network, horizon=3)
+    
+    assert result["status"] == "OPTIMAL"
+    # Cost remains standard (115.0) because consumption factor limits capacity, 
+    # not the fundamental financial cost per unit.
+    assert result["objective_value"] == pytest.approx(115.0, rel=1e-5)
 
 
 def test_pydantic_timeline_validator():
     """
-    Test 4: Pure schema test ensuring the Pydantic model throws a ValueError 
-    if a commodity due date occurs before its available time.
+    Test 5: Validates intrinsic schema parameters ensuring chronological consistency.
     """
     with pytest.raises(ValueError, match="due_date cannot be earlier than available_time"):
         Commodity(
@@ -149,17 +187,17 @@ def test_pydantic_timeline_validator():
             destination="NodeB",
             volume=10.0,
             available_time=5,
-            due_date=2 # Invalid timeline
+            due_date=2, 
+            consumption_factor=1.0
         )
 
 
 def test_network_relational_integrity_validator():
     """
-    Test 5: Validates that the network throws an integrity error if an edge 
-    points to a node that does not exist in the node ledger array.
+    Test 6: Validates structural integrity matrices.
     """
     nodes = [Node(id="RealNode", capacity_limit=50.0)]
-    edges = [Edge(from_node="RealNode", to_node="FakeNode", transit_time=1)] # Non-existent target
+    edges = [Edge(from_node="RealNode", to_node="FakeNode", transit_time=1)]
     commodities = []
     
     with pytest.raises(ValueError, match="references a non-existent node"):
