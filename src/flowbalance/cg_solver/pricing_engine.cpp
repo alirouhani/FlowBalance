@@ -16,7 +16,6 @@ struct TimeSpaceArc {
     int to_idx;
     double cost;
 
-    // Explicit constructor required by py::init
     TimeSpaceArc(int _id, int _from, int _to, double _cost)
         : id(_id), from_idx(_from), to_idx(_to), cost(_cost) {}
 };
@@ -25,10 +24,11 @@ struct CommodityCore {
     int id;
     int origin;
     int destination;
+    double volume;
+    double consumption_factor;
 
-    // Explicit constructor required by py::init
-    CommodityCore(int _id, int _origin, int _dest)
-        : id(_id), origin(_origin), destination(_dest) {}
+    CommodityCore(int _id, int _origin, int _dest, double _vol, double _cons)
+        : id(_id), origin(_origin), destination(_dest), volume(_vol), consumption_factor(_cons) {}
 };
 
 struct GeneratedColumn {
@@ -37,38 +37,19 @@ struct GeneratedColumn {
     double reduced_cost;
 };
 
+struct State {
+    int node;
+    double dist;
+    bool operator>(const State& other) const {
+        return dist > other.dist;
+    }
+};
+
 class PricingEngine {
 private:
     int num_nodes;
     std::vector<TimeSpaceArc> arcs;
     std::vector<std::vector<int>> adjacency_list;
-    std::vector<int> topological_order;
-
-    void compute_topological_sort() {
-        std::vector<int> in_degree(num_nodes, 0);
-        for (const auto& arc : arcs) {
-            in_degree[arc.to_idx]++;
-        }
-
-        std::queue<int> q;
-        for (int i = 0; i < num_nodes; ++i) {
-            if (in_degree[i] == 0) q.push(i);
-        }
-
-        topological_order.clear();
-        while (!q.empty()) {
-            int u = q.front();
-            q.pop();
-            topological_order.push_back(u);
-
-            for (int arc_idx : adjacency_list[u]) {
-                int v = arcs[arc_idx].to_idx;
-                if (--in_degree[v] == 0) {
-                    q.push(v);
-                }
-            }
-        }
-    }
 
 public:
     PricingEngine(int n_nodes, const std::vector<TimeSpaceArc>& ts_arcs) 
@@ -77,49 +58,48 @@ public:
         for (size_t i = 0; i < arcs.size(); ++i) {
             adjacency_list[arcs[i].from_idx].push_back(i);
         }
-        compute_topological_sort();
     }
 
     std::vector<GeneratedColumn> find_columns(
-        const std::vector<CommodityCore>& commodities,
-        const std::vector<double>& dual_pi,
-        const std::vector<double>& dual_mu) 
+        const std::vector<CommodityCore>& active_commodities,
+        const std::vector<double>& dual_w, 
+        const std::vector<double>& dual_alpha) 
     {
         std::vector<GeneratedColumn> new_columns;
 
-        for (const auto& comm : commodities) {
+        for (const auto& comm : active_commodities) {
+            if (comm.origin >= num_nodes || comm.destination >= num_nodes) continue;
+
             std::vector<double> dist(num_nodes, INF);
             std::vector<int> parent_arc(num_nodes, -1);
-            std::vector<int> parent_node(num_nodes, -1);
-
-            if (comm.origin >= num_nodes || comm.destination >= num_nodes) {
-                continue;
-            }
+            std::priority_queue<State, std::vector<State>, std::greater<State>> pq;
 
             dist[comm.origin] = 0.0;
+            pq.push({comm.origin, 0.0});
 
-            for (int u : topological_order) {
-                if (dist[u] == INF) continue;
+            while (!pq.empty()) {
+                State current = pq.top();
+                pq.pop();
 
-                for (int arc_idx : adjacency_list[u]) {
+                if (current.node == comm.destination) break; 
+                if (current.dist > dist[current.node]) continue;
+
+                for (int arc_idx : adjacency_list[current.node]) {
                     const auto& arc = arcs[arc_idx];
-                    int v = arc.to_idx;
-
-                    double reduced_cost = arc.cost - dual_pi[arc.id];
                     
-                    if (dist[u] + reduced_cost < dist[v]) {
-                        dist[v] = dist[u] + reduced_cost;
-                        parent_arc[v] = arc.id;
-                        parent_node[v] = u;
+                    // Scaled reduced cost incorporating volume and consumption factor constraints
+                    double reduced_cost = (arc.cost * comm.volume) - (dual_w[arc.id] * comm.volume * comm.consumption_factor);
+                    
+                    if (dist[current.node] + reduced_cost < dist[arc.to_idx] - EPSILON) {
+                        dist[arc.to_idx] = dist[current.node] + reduced_cost;
+                        parent_arc[arc.to_idx] = arc.id;
+                        pq.push({arc.to_idx, dist[arc.to_idx]});
                     }
                 }
             }
 
-            if (comm.id >= static_cast<int>(dual_mu.size())) {
-                continue;
-            }
-
-            double final_reduced_cost = dist[comm.destination] - dual_mu[comm.id];
+            if (comm.id >= static_cast<int>(dual_alpha.size())) continue;
+            double final_reduced_cost = dist[comm.destination] - dual_alpha[comm.id];
 
             if (final_reduced_cost < -EPSILON && dist[comm.destination] != INF) {
                 GeneratedColumn col;
@@ -127,18 +107,15 @@ public:
                 col.reduced_cost = final_reduced_cost;
 
                 int curr = comm.destination;
-                bool valid_path = true;
+                bool valid = true;
                 while (curr != comm.origin) {
                     int a_id = parent_arc[curr];
-                    if (a_id == -1) {
-                        valid_path = false;
-                        break;
-                    }
+                    if (a_id == -1) { valid = false; break; }
                     col.arc_ids.push_back(a_id);
-                    curr = parent_node[curr];
+                    curr = arcs[a_id].from_idx;
                 }
                 
-                if (valid_path) {
+                if (valid) {
                     std::reverse(col.arc_ids.begin(), col.arc_ids.end());
                     new_columns.push_back(col);
                 }
@@ -150,19 +127,19 @@ public:
 
 PYBIND11_MODULE(_flowbalance_pricing, m) {
     py::class_<TimeSpaceArc>(m, "TimeSpaceArc")
-        .def(py::init<int, int, int, double>(), 
-             py::arg("id"), py::arg("from_idx"), py::arg("to_idx"), py::arg("cost"))
+        .def(py::init<int, int, int, double>())
         .def_readwrite("id", &TimeSpaceArc::id)
         .def_readwrite("from_idx", &TimeSpaceArc::from_idx)
         .def_readwrite("to_idx", &TimeSpaceArc::to_idx)
         .def_readwrite("cost", &TimeSpaceArc::cost);
 
     py::class_<CommodityCore>(m, "CommodityCore")
-        .def(py::init<int, int, int>(), 
-             py::arg("id"), py::arg("origin"), py::arg("destination"))
+        .def(py::init<int, int, int, double, double>())
         .def_readwrite("id", &CommodityCore::id)
         .def_readwrite("origin", &CommodityCore::origin)
-        .def_readwrite("destination", &CommodityCore::destination);
+        .def_readwrite("destination", &CommodityCore::destination)
+        .def_readwrite("volume", &CommodityCore::volume)
+        .def_readwrite("consumption_factor", &CommodityCore::consumption_factor);
 
     py::class_<GeneratedColumn>(m, "GeneratedColumn")
         .def_readonly("commodity_id", &GeneratedColumn::commodity_id)
@@ -170,7 +147,6 @@ PYBIND11_MODULE(_flowbalance_pricing, m) {
         .def_readonly("reduced_cost", &GeneratedColumn::reduced_cost);
 
     py::class_<PricingEngine>(m, "PricingEngine")
-        .def(py::init<int, const std::vector<TimeSpaceArc>&>(), 
-             py::arg("num_nodes"), py::arg("ts_arcs"))
+        .def(py::init<int, const std::vector<TimeSpaceArc>&>())
         .def("find_columns", &PricingEngine::find_columns, py::call_guard<py::gil_scoped_release>());
 }
