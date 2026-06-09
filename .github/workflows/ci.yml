@@ -8,13 +8,13 @@ on:
 
 jobs:
   test:
-    name: Run Unit Tests (Python ${{ matrix.python-version }})
+    name: Run Matrix Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     
     strategy:
       matrix:
-        # Test across multiple Python versions to guarantee package cross-compatibility
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        # Match the modern cross-compatibility matrix supported by your tox.ini
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
     # 1. Check out the repository source code so the runner can access it
@@ -26,19 +26,23 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip' # Automatically caches pip dependencies to make subsequent runs faster
+        cache: 'pip' # Automatically caches dependencies to accelerate runs
 
-    # 3. Upgrade core packaging tools
-    - name: Upgrade Pip and Build Tools
+    # 3. Install build dependencies and the C++ compilation suite
+    - name: Install System Compiler Utilities
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential python3-dev
+
+    # 4. Install tox and the GitHub Actions environment mapper
+    - name: Install Test Automation Tools
       run: |
         python -m pip install --upgrade pip setuptools wheel
+        pip install tox tox-gh-actions
 
-    # 4. Install the package in editable mode along with [dev] test requirements
-    - name: Install Package and Dependencies
+    # 5. Execute tox using parallel GitHub runner environments
+    # tox-gh-actions will automatically restrict execution on this specific runner 
+    # to the environment matching the current active matrix version.
+    - name: do Tox
       run: |
-        pip install -e ".[dev]"
-
-    # 5. Execute split testing suite
-    - name: Run Test Suite via Pytest
-      run: |
-        pytest -v
+        tox
